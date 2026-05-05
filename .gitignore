@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Raw data (large binary recordings)
+output_raw/
+*.avi
+*.svo
+*.svo2
+*.npy
+*.bvh
+
+# Video output (large binaries)
+output_video/
+*_markers.mp4
+*_output.mp4
+PumpProcedure/output_video/
+PumpProcedure/montaggio/
+PumpProcedure/smontaggio_*/
+PumpProcedure/montaggio_*/
+
+# ML model weights
+*.pt
+*.onnx
+*.weights
+
+# Claude local settings
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

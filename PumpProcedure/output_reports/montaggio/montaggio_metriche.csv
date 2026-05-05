@@ -1,0 +1,20 @@
+Metrica,Valore
+Durata (s),9.17
+Frequenza campionamento (Hz),30.3
+RULA medio,3.28
+RULA massimo,5.0
+% frame RULA ≥ 5 (azione immediata),5.5
+SPARC DX (fluido = meno negativo),-1.226
+SPARC SX,-1.52
+Log-dim Jerk DX (fluido = più negativo),-22.315
+Log-dim Jerk SX,-22.25
+Inversioni velocità DX (n),20.0
+Inversioni velocità SX (n),15.0
+Lunghezza traiettoria DX (m),8.067
+Lunghezza traiettoria SX (m),24.779
+Dwell Time DX (% task),0.0
+Dwell Time SX (% task),0.0
+Intervalli pausa DX (n),0.0
+Intervalli pausa SX (n),0.0
+SD Upper Arm DX (°),10.9
+SD Upper Arm SX (°),27.26
