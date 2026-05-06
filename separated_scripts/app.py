@@ -247,6 +247,67 @@ def run_composite_analysis(clean_path):
 
     return domains, composite_cols, composite_labels, comp_df, sig_domains, dir_tables, df_z_b, df_z_wl, common_z
 
+# ── PCA within-domain + regression (cached) ──────────────────────────────
+@st.cache_data
+def run_pca_regression(clean_path):
+    import statsmodels.formula.api as smf
+    df_c = pd.read_csv(clean_path)
+    df_c["Condition"] = pd.Categorical(df_c["Condition"], categories=["baseline","workload"], ordered=True)
+
+    domains_pca = {
+        "movement": ["SPARC_Dom","Jerk_Dom","VelInv_Dom","Dwell_Dom",
+                     "Vel_Mean_Dom","Vel_Peak_Dom","Vel_SD_Dom","PathLen_Dom"],
+        "wrist":    ["Wr_Flex_Mean_Dom","Wr_Flex_SD_Dom","Wr_Dev_Mean_Dom","Wr_Dev_SD_Dom"],
+        "posture":  ["Neck_Sag_Mean","Neck_Sag_SD","Trunk_Sag_Mean","Trunk_Sag_SD"],
+        "arm":      ["UA_Mean_Dom","SD_UA_Dom","LA_Mean_Dom","SD_LA_Dom"],
+    }
+
+    df_m = df_c.copy()
+    df_m["condition_num"] = (df_m["Condition"] == "workload").astype(int)
+    df_m["Subject_ID"]    = df_m["Subject_ID"].astype(str)
+    pc1_loadings = {}
+    var_exp_pc1  = {}
+
+    for domain, vars_list in domains_pca.items():
+        X      = df_c[vars_list].astype(float).values
+        X_std  = (X - X.mean(axis=0)) / X.std(axis=0, ddof=1)
+        U, S, Vt = np.linalg.svd(X_std, full_matrices=False)
+        ve     = (S[0]**2) / np.sum(S**2)
+        pc1    = U[:, 0] * S[0]
+        load1  = Vt[0, :]
+        if np.corrcoef(pc1, df_m["condition_num"].values)[0, 1] < 0:
+            pc1, load1 = -pc1, -load1
+        df_m[f"PC1_{domain}"]  = pc1
+        pc1_loadings[domain]   = pd.Series(load1, index=vars_list)
+        var_exp_pc1[domain]    = ve
+
+    rula_mu = df_c["RULA_Mean"].astype(float).mean()
+    rula_sd = df_c["RULA_Mean"].astype(float).std(ddof=1)
+    df_m["RULA_std"] = (df_c["RULA_Mean"].astype(float) - rula_mu) / rula_sd
+
+    formula = ("condition_num ~ PC1_movement + PC1_wrist + PC1_posture + PC1_arm "
+               "+ RULA_std + C(Subject_ID)")
+    model = smf.ols(formula, data=df_m).fit()
+
+    pred_names = ["PC1_movement","PC1_wrist","PC1_posture","PC1_arm","RULA_std"]
+    reg_rows = []
+    for pred in pred_names:
+        beta = model.params[pred]
+        p    = model.pvalues[pred]
+        ci   = model.conf_int().loc[pred]
+        reg_rows.append({"predittore": pred,
+                         "β": round(beta,4),
+                         "CI low":  round(ci.iloc[0],4),
+                         "CI high": round(ci.iloc[1],4),
+                         "p": round(p,4),
+                         "sig": p < 0.05})
+    reg_df = pd.DataFrame(reg_rows).set_index("predittore")
+
+    sig_pred_domains = [p.replace("PC1_","") for p in pred_names
+                        if p.startswith("PC1_") and model.pvalues[p] < 0.05]
+
+    return domains_pca, pc1_loadings, var_exp_pc1, reg_df, sig_pred_domains, model.rsquared, len(df_m)
+
 # ── Descriptive helper ───────────────────────────────────────
 def descrittive(data, vars_list):
     rows = []
@@ -265,6 +326,7 @@ if not os.path.exists(DATASET_PATH):
 df, df_clean = load_data()
 delta, norm_df, cond_df, sig_vars, order_df, power_df, corr_df, corr_mat, pval_mat = run_analysis(CLEAN_PATH)
 domains, composite_cols, composite_labels, comp_df, sig_domains, dir_tables, df_z_b, df_z_wl, common_z = run_composite_analysis(CLEAN_PATH)
+domains_pca, pc1_loadings, var_exp_pc1, reg_df, sig_pred_domains, r_squared, n_obs = run_pca_regression(CLEAN_PATH)
 
 # ── Tabs ─────────────────────────────────────────────────────
 tabs = st.tabs([
@@ -278,6 +340,7 @@ tabs = st.tabs([
     "💪 Power Analysis",
     "🔗 Correlazioni Delta",
     "🧩 Variabili Composite",
+    "📐 PCA + Regressione",
     "📝 Considerazioni Finali",
 ])
 
@@ -631,8 +694,96 @@ with tabs[9]:
         st.info("Nessun composite significativo dopo FDR.")
 
 
-# ── Tab 10: Considerazioni Finali ────────────────────────────
+# ── Tab 10: PCA + Regressione ────────────────────────────────
 with tabs[10]:
+    st.header("PCA within-domain + Regressione condizione")
+    st.markdown(
+        "Per ogni dominio viene estratta la **PC1** (combinazione lineare ottimale delle variabili). "
+        "Le PC1 dei 4 domini + RULA sono usate come predittori in una **OLS con subject fixed effects**, "
+        "che gestisce il design within-subject controllando le differenze individuali."
+    )
+
+    st.subheader("Varianza spiegata da PC1 per dominio")
+    ve_df = pd.DataFrame([
+        {"Dominio": d, "PC1 varianza (%)": round(v*100, 1), "N variabili": len(vars_list)}
+        for (d, vars_list), v in zip(domains_pca.items(), var_exp_pc1.values())
+    ]).set_index("Dominio")
+    st.dataframe(ve_df, width="content")
+
+    st.divider()
+    st.subheader("Risultati regressione")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("R²", f"{r_squared:.3f}")
+    c2.metric("Predittori significativi", f"{reg_df['sig'].sum()} / 5")
+    c3.metric("Osservazioni", n_obs)
+
+    st.dataframe(
+        reg_df.style.map(lambda v: "background-color: #d4f1d4" if v is True else "",
+                         subset=["sig"]),
+        width="stretch"
+    )
+
+    st.subheader("β coefficients (con IC 95%)")
+    fig_rb, ax_rb = plt.subplots(figsize=(8, 4))
+    colors_rb = ["#2ECC71" if s else "#BDC3C7" for s in reg_df["sig"]]
+    y_pos = list(range(len(reg_df)))
+    ax_rb.barh(y_pos, reg_df["β"], color=colors_rb, edgecolor="white", alpha=0.85)
+    ax_rb.errorbar(reg_df["β"], y_pos,
+                   xerr=[reg_df["β"] - reg_df["CI low"], reg_df["CI high"] - reg_df["β"]],
+                   fmt="none", color="black", linewidth=1.5, capsize=4)
+    ax_rb.axvline(0, color="black", linewidth=0.8)
+    ax_rb.set_yticks(y_pos); ax_rb.set_yticklabels(reg_df.index)
+    ax_rb.set_xlabel("β (coefficiente di regressione)")
+    ax_rb.set_title("Regressione condizione ~ PC1 domini\nverde = p<0.05", fontweight="bold")
+    ax_rb.spines["top"].set_visible(False); ax_rb.spines["right"].set_visible(False)
+    fig_rb.tight_layout()
+    st.pyplot(fig_rb)
+    plt.close(fig_rb)
+
+    if sig_pred_domains:
+        st.divider()
+        st.subheader("Loadings PC1 — domini significativi")
+        st.markdown("I loadings spiegano *cosa significa* un punteggio PC1 alto: "
+                    "variabili con loading positivo ↑ aumentano nel workload, negative ↓ diminuiscono.")
+        for domain in sig_pred_domains:
+            st.markdown(f"**{domain}**")
+            loads = pc1_loadings[domain].sort_values(key=abs, ascending=False)
+            fig_ld, ax_ld = plt.subplots(figsize=(6, max(3, len(loads)*0.45)))
+            colors_ld = ["#E74C3C" if v > 0 else "#3498DB" for v in loads.values]
+            ax_ld.barh(loads.index, loads.values, color=colors_ld, edgecolor="white", alpha=0.85)
+            ax_ld.axvline(0, color="black", linewidth=0.8)
+            ax_ld.set_xlabel("Loading PC1")
+            ax_ld.set_title(f"PC1 '{domain}' — rosso ↑ workload  |  blu ↓ workload",
+                            fontweight="bold", fontsize=9)
+            ax_ld.spines["top"].set_visible(False); ax_ld.spines["right"].set_visible(False)
+            fig_ld.tight_layout()
+            st.pyplot(fig_ld)
+            plt.close(fig_ld)
+
+        st.subheader("Loadings tutti i domini")
+        fig_all, axes_all = plt.subplots(1, len(domains_pca), figsize=(4.5*len(domains_pca), 4))
+        for ax_all, (domain, vars_list) in zip(axes_all, domains_pca.items()):
+            loads = pc1_loadings[domain]
+            is_sig = domain in sig_pred_domains
+            c_all = ["#2ECC71" if is_sig else "#4C9BE8"] * len(loads)
+            ax_all.barh(loads.index, loads.values, color=c_all, edgecolor="white", alpha=0.85)
+            ax_all.axvline(0, color="black", linewidth=0.8)
+            ax_all.set_title(f"{domain} ({var_exp_pc1[domain]*100:.0f}%)"
+                             + (" ✓" if is_sig else ""),
+                             fontweight="bold", fontsize=9)
+            ax_all.set_xlabel("Loading", fontsize=8)
+            ax_all.tick_params(axis="y", labelsize=7)
+            ax_all.spines["top"].set_visible(False); ax_all.spines["right"].set_visible(False)
+        fig_all.suptitle("Loadings PC1 per tutti i domini", fontweight="bold")
+        fig_all.tight_layout()
+        st.pyplot(fig_all)
+        plt.close(fig_all)
+    else:
+        st.info("Nessun dominio significativo nella regressione (p<0.05).")
+
+
+# ── Tab 11: Considerazioni Finali ────────────────────────────
+with tabs[11]:
     st.header("Considerazioni Finali")
 
     n_sig_fdr = int(cond_df["sig_fdr"].sum())
