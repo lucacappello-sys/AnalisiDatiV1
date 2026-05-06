@@ -163,6 +163,90 @@ def run_analysis(clean_path):
 
     return delta, norm_df, cond_df, sig_vars, order_df, power_df, corr_df, corr_mat, pval_mat
 
+# ── Composite analysis (cached) ──────────────────────────────────────────
+@st.cache_data
+def run_composite_analysis(clean_path):
+    df_c = pd.read_csv(clean_path)
+    df_c["Condition"] = pd.Categorical(df_c["Condition"], categories=["baseline","workload"], ordered=True)
+
+    domains = {
+        "movement": ["SPARC_Dom","Jerk_Dom","VelInv_Dom","Dwell_Dom",
+                     "Vel_Mean_Dom","Vel_Peak_Dom","Vel_SD_Dom","PathLen_Dom"],
+        "wrist":    ["Wr_Flex_Mean_Dom","Wr_Flex_SD_Dom","Wr_Dev_Mean_Dom","Wr_Dev_SD_Dom"],
+        "posture":  ["Neck_Sag_Mean","Neck_Sag_SD","Trunk_Sag_Mean","Trunk_Sag_SD"],
+        "arm":      ["UA_Mean_Dom","SD_UA_Dom","LA_Mean_Dom","SD_LA_Dom"],
+    }
+    all_vars_c = [v for grp in domains.values() for v in grp] + ["RULA_Mean"]
+
+    df_z = df_c.copy()
+    for var in all_vars_c:
+        mu = df_c[var].astype(float).mean()
+        sd = df_c[var].astype(float).std(ddof=1)
+        df_z[var] = (df_c[var].astype(float) - mu) / sd
+
+    for domain, vars_list in domains.items():
+        df_z[f"comp_{domain}"] = df_z[vars_list].mean(axis=1)
+    df_z["comp_RULA"] = df_z["RULA_Mean"]
+
+    composite_cols   = [f"comp_{d}" for d in domains] + ["comp_RULA"]
+    composite_labels = list(domains.keys()) + ["RULA"]
+
+    df_z_b  = df_z[df_z["Condition"]=="baseline"].set_index("Subject_ID")
+    df_z_wl = df_z[df_z["Condition"]=="workload"].set_index("Subject_ID")
+    common_z = df_z_b.index.intersection(df_z_wl.index)
+
+    delta_comp = pd.DataFrame(index=common_z)
+    for col in composite_cols:
+        delta_comp[col] = df_z_wl.loc[common_z, col] - df_z_b.loc[common_z, col]
+
+    comp_results = []
+    for col, label in zip(composite_cols, composite_labels):
+        d   = delta_comp[col].dropna().values
+        b_v = df_z_b.loc[common_z, col].values.astype(float)
+        w_v = df_z_wl.loc[common_z, col].values.astype(float)
+        _, p_sw = shapiro(d)
+        if p_sw > 0.05:
+            stat, p   = ttest_rel(w_v, b_v)
+            test_name = "t-test"
+            eff       = np.mean(d) / np.std(d, ddof=1)
+        else:
+            stat, p   = wilcoxon(w_v, b_v, alternative="two-sided")
+            test_name = "Wilcoxon"
+            eff       = 1 - (2*stat) / (len(d)*(len(d)+1)/2)
+        comp_results.append({"composite": label, "test": test_name,
+                             "stat": round(stat,4), "p_raw": round(p,4),
+                             "effect": round(eff,4)})
+
+    comp_df = pd.DataFrame(comp_results)
+    reject_c, p_fdr_c, _, _ = multipletests(comp_df["p_raw"], method="fdr_bh", alpha=0.05)
+    comp_df["p_fdr"]   = p_fdr_c.round(4)
+    comp_df["sig_fdr"] = reject_c
+
+    sig_domains = [lbl for lbl, sig in zip(composite_labels, reject_c) if sig and lbl in domains]
+    dir_tables = {}
+    for label in sig_domains:
+        dir_rows = []
+        for var in domains[label]:
+            d_var  = (df_z_wl.loc[common_z, var] - df_z_b.loc[common_z, var]).values.astype(float)
+            mean_d = np.mean(d_var)
+            _, p_sw = shapiro(d_var)
+            if p_sw > 0.05:
+                _, p_t = ttest_rel(df_z_wl.loc[common_z, var].values.astype(float),
+                                    df_z_b.loc[common_z, var].values.astype(float))
+            else:
+                _, p_t = wilcoxon(df_z_wl.loc[common_z, var].values.astype(float),
+                                   df_z_b.loc[common_z, var].values.astype(float),
+                                   alternative="two-sided")
+            dir_rows.append({"variabile": var,
+                             "mean_delta_z": round(mean_d, 4),
+                             "direzione": "↑ aumenta" if mean_d > 0 else "↓ diminuisce",
+                             "p": round(p_t, 4)})
+        dir_tables[label] = (pd.DataFrame(dir_rows)
+                               .sort_values("mean_delta_z", key=abs, ascending=False)
+                               .set_index("variabile"))
+
+    return domains, composite_cols, composite_labels, comp_df, sig_domains, dir_tables, df_z_b, df_z_wl, common_z
+
 # ── Descriptive helper ───────────────────────────────────────
 def descrittive(data, vars_list):
     rows = []
@@ -180,6 +264,7 @@ if not os.path.exists(DATASET_PATH):
 
 df, df_clean = load_data()
 delta, norm_df, cond_df, sig_vars, order_df, power_df, corr_df, corr_mat, pval_mat = run_analysis(CLEAN_PATH)
+domains, composite_cols, composite_labels, comp_df, sig_domains, dir_tables, df_z_b, df_z_wl, common_z = run_composite_analysis(CLEAN_PATH)
 
 # ── Tabs ─────────────────────────────────────────────────────
 tabs = st.tabs([
@@ -192,6 +277,7 @@ tabs = st.tabs([
     "🎯 K-Means",
     "💪 Power Analysis",
     "🔗 Correlazioni Delta",
+    "🧩 Variabili Composite",
     "📝 Considerazioni Finali",
 ])
 
@@ -456,8 +542,97 @@ with tabs[8]:
     else:
         st.info("Nessuna coppia con p<0.05.")
 
-# ── Tab 9: Considerazioni Finali ─────────────────────────────
+# ── Tab 9: Variabili Composite ───────────────────────────────
 with tabs[9]:
+    st.header("Variabili composite (domain scores)")
+    st.markdown(
+        "Approccio per risolvere la **multicollinearità** tra variabili dello stesso dominio: "
+        "ogni variabile è z-scorata sul dataset pooled, poi le z-score sono mediate per dominio. "
+        "Riduzione da 21 test a **5** (4 composite + RULA)."
+    )
+
+    st.subheader("Composizione dei domini")
+    domain_info = {
+        "movement": ["SPARC_Dom","Jerk_Dom","VelInv_Dom","Dwell_Dom",
+                     "Vel_Mean_Dom","Vel_Peak_Dom","Vel_SD_Dom","PathLen_Dom"],
+        "wrist":    ["Wr_Flex_Mean_Dom","Wr_Flex_SD_Dom","Wr_Dev_Mean_Dom","Wr_Dev_SD_Dom"],
+        "posture":  ["Neck_Sag_Mean","Neck_Sag_SD","Trunk_Sag_Mean","Trunk_Sag_SD"],
+        "arm":      ["UA_Mean_Dom","SD_UA_Dom","LA_Mean_Dom","SD_LA_Dom"],
+        "RULA (standalone)": ["RULA_Mean"],
+    }
+    domain_df = pd.DataFrame([
+        {"Composite": k, "N variabili": len(v), "Variabili": ", ".join(v)}
+        for k, v in domain_info.items()
+    ]).set_index("Composite")
+    st.dataframe(domain_df, width="stretch")
+
+    st.divider()
+    st.subheader("Risultati — effetto condizione")
+
+    n_sig_c = comp_df["sig_fdr"].sum()
+    c1, c2 = st.columns(2)
+    c1.metric("Composite significativi (FDR)", f"{n_sig_c} / 5")
+    c2.metric("Test totali (vs 21 variabili)", "5")
+
+    st.dataframe(
+        comp_df.set_index("composite").style.map(
+            lambda v: "background-color: #d4f1d4" if v is True else "", subset=["sig_fdr"]
+        ),
+        width="stretch"
+    )
+
+    st.subheader("Effect size per composite")
+    fig_ce, ax_ce = plt.subplots(figsize=(8, 3.5))
+    colors_c = ["#2ECC71" if s else "#BDC3C7" for s in comp_df["sig_fdr"]]
+    ax_ce.barh(comp_df["composite"], comp_df["effect"], color=colors_c,
+               edgecolor="white", alpha=0.85)
+    ax_ce.axvline(0, color="black", linewidth=0.8)
+    for _, row in comp_df.iterrows():
+        xoff = 0.02 if row["effect"] >= 0 else -0.02
+        ha   = "left" if row["effect"] >= 0 else "right"
+        ax_ce.text(row["effect"]+xoff,
+                   comp_df.index[comp_df["composite"]==row["composite"]].tolist()[0],
+                   f"q={row['p_fdr']:.3f}" + (" ✓" if row["sig_fdr"] else ""),
+                   va="center", ha=ha, fontsize=8)
+    ax_ce.set_xlabel("Effect size (d_z o r_rb)")
+    ax_ce.set_title("Effetto condizione — composite scores\nverde = sig. FDR", fontweight="bold")
+    ax_ce.spines["top"].set_visible(False); ax_ce.spines["right"].set_visible(False)
+    fig_ce.tight_layout()
+    st.pyplot(fig_ce)
+    plt.close(fig_ce)
+
+    st.subheader("Paired lines per composite")
+    fig_cp, axes_cp = plt.subplots(1, len(composite_cols), figsize=(4*len(composite_cols), 4))
+    for ax_cp, col, label in zip(axes_cp, composite_cols, composite_labels):
+        b_vals = df_z_b.loc[common_z, col].values.astype(float)
+        w_vals = df_z_wl.loc[common_z, col].values.astype(float)
+        for bv, wv in zip(b_vals, w_vals):
+            ax_cp.plot([0, 1], [bv, wv],
+                       color="#E74C3C" if wv > bv else "#3498DB", alpha=0.45, linewidth=1)
+        ax_cp.boxplot([b_vals, w_vals], positions=[0, 1], widths=0.3,
+                      medianprops=dict(color="black", linewidth=2))
+        ax_cp.set_xticks([0, 1]); ax_cp.set_xticklabels(["baseline", "workload"], fontsize=8)
+        row = comp_df[comp_df["composite"] == label].iloc[0]
+        ax_cp.set_title(f"{label}{' *' if row['sig_fdr'] else ''}\nq={row['p_fdr']:.3f}",
+                        fontweight="bold", fontsize=9)
+        ax_cp.spines["top"].set_visible(False); ax_cp.spines["right"].set_visible(False)
+    fig_cp.suptitle("Composite scores — baseline vs workload", fontweight="bold")
+    fig_cp.tight_layout()
+    st.pyplot(fig_cp)
+    plt.close(fig_cp)
+
+    if sig_domains:
+        st.divider()
+        st.subheader("Direzione variabili interne nei composite significativi")
+        for label in sig_domains:
+            st.markdown(f"**{label}**")
+            st.dataframe(dir_tables[label], width="stretch")
+    else:
+        st.info("Nessun composite significativo dopo FDR.")
+
+
+# ── Tab 10: Considerazioni Finali ────────────────────────────
+with tabs[10]:
     st.header("Considerazioni Finali")
 
     n_sig_fdr = int(cond_df["sig_fdr"].sum())
