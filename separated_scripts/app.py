@@ -17,14 +17,14 @@ CLEAN_PATH   = os.path.join(SCRIPT_DIR, "output_analysis", "analysis_dataset_cle
 
 KINEMATICS_VARS = [
     "SPARC_Dom", "Jerk_Dom", "VelInv_Dom", "Dwell_Dom",
-    "Vel_Mean_Dom", "Vel_Peak_Dom", "Vel_SD_Dom", "PathLen_Dom",
+    "Vel_Mean_Dom", "Vel_Peak_Dom", "Vel_Var_Dom", "PathLen_Dom",
     "RULA_Mean",
-    "Wr_Flex_Mean_Dom", "Wr_Flex_SD_Dom",
-    "Wr_Dev_Mean_Dom",  "Wr_Dev_SD_Dom",
-    "UA_Mean_Dom",      "SD_UA_Dom",
-    "LA_Mean_Dom",      "SD_LA_Dom",
-    "Neck_Sag_Mean",    "Neck_Sag_SD",
-    "Trunk_Sag_Mean",   "Trunk_Sag_SD",
+    "Wr_Flex_Mean_Dom", "Wr_Flex_Var_Dom",
+    "Wr_Dev_Mean_Dom",  "Wr_Dev_Var_Dom",
+    "UA_Mean_Dom",      "Var_UA_Dom",
+    "LA_Mean_Dom",      "Var_LA_Dom",
+    "Neck_Sag_Mean",    "Neck_Sag_Var",
+    "Trunk_Sag_Mean",   "Trunk_Sag_Var",
 ]
 
 # ── Page config ──────────────────────────────────────────────
@@ -171,10 +171,10 @@ def run_composite_analysis(clean_path):
 
     domains = {
         "movement": ["SPARC_Dom","Jerk_Dom","VelInv_Dom","Dwell_Dom",
-                     "Vel_Mean_Dom","Vel_Peak_Dom","Vel_SD_Dom","PathLen_Dom"],
-        "wrist":    ["Wr_Flex_Mean_Dom","Wr_Flex_SD_Dom","Wr_Dev_Mean_Dom","Wr_Dev_SD_Dom"],
-        "posture":  ["Neck_Sag_Mean","Neck_Sag_SD","Trunk_Sag_Mean","Trunk_Sag_SD"],
-        "arm":      ["UA_Mean_Dom","SD_UA_Dom","LA_Mean_Dom","SD_LA_Dom"],
+                     "Vel_Mean_Dom","Vel_Peak_Dom","Vel_Var_Dom","PathLen_Dom"],
+        "wrist":    ["Wr_Flex_Mean_Dom","Wr_Flex_Var_Dom","Wr_Dev_Mean_Dom","Wr_Dev_Var_Dom"],
+        "posture":  ["Neck_Sag_Mean","Neck_Sag_Var","Trunk_Sag_Mean","Trunk_Sag_Var"],
+        "arm":      ["UA_Mean_Dom","Var_UA_Dom","LA_Mean_Dom","Var_LA_Dom"],
     }
     all_vars_c = [v for grp in domains.values() for v in grp] + ["RULA_Mean"]
 
@@ -256,10 +256,10 @@ def run_pca_regression(clean_path):
 
     domains_pca = {
         "movement": ["SPARC_Dom","Jerk_Dom","VelInv_Dom","Dwell_Dom",
-                     "Vel_Mean_Dom","Vel_Peak_Dom","Vel_SD_Dom","PathLen_Dom"],
-        "wrist":    ["Wr_Flex_Mean_Dom","Wr_Flex_SD_Dom","Wr_Dev_Mean_Dom","Wr_Dev_SD_Dom"],
-        "posture":  ["Neck_Sag_Mean","Neck_Sag_SD","Trunk_Sag_Mean","Trunk_Sag_SD"],
-        "arm":      ["UA_Mean_Dom","SD_UA_Dom","LA_Mean_Dom","SD_LA_Dom"],
+                     "Vel_Mean_Dom","Vel_Peak_Dom","Vel_Var_Dom","PathLen_Dom"],
+        "wrist":    ["Wr_Flex_Mean_Dom","Wr_Flex_Var_Dom","Wr_Dev_Mean_Dom","Wr_Dev_Var_Dom"],
+        "posture":  ["Neck_Sag_Mean","Neck_Sag_Var","Trunk_Sag_Mean","Trunk_Sag_Var"],
+        "arm":      ["UA_Mean_Dom","Var_UA_Dom","LA_Mean_Dom","Var_LA_Dom"],
     }
 
     df_m = df_c.copy()
@@ -337,7 +337,6 @@ tabs = st.tabs([
     "🔀 Order Effect",
     "🧮 PCA",
     "🎯 K-Means",
-    "💪 Power Analysis",
     "🔗 Correlazioni Delta",
     "🧩 Variabili Composite",
     "📐 PCA + Regressione",
@@ -508,51 +507,8 @@ with tabs[6]:
     show_fig("kmeans_conditions.png",
              "Sinistra: condizione vera | Destra: corretto (verde) / errato (rosso)")
 
-# ── Tab 7: Power Analysis ─────────────────────────────────────
-with tabs[7]:
-    st.header("Power Analysis post-hoc")
-    st.markdown(
-        "Per ogni variabile: potenza osservata del paired t-test con il Cohen's d_z misurato, "
-        "N=18, α=0.05. "
-        "**Variabili non sig. con bassa potenza** → il campione era probabilmente troppo piccolo. "
-        "**Variabili non sig. con alta potenza** → l'effetto è probabilmente assente."
-    )
-
-    col1, col2 = st.columns(2)
-    under_powered = power_df[(~power_df["sig_fdr"]) & (power_df["power"] < 0.80)]
-    adequate      = power_df[(~power_df["sig_fdr"]) & (power_df["power"] >= 0.80)]
-    col1.metric("Non sig. + sotto-potenziate", len(under_powered))
-    col2.metric("Non sig. + potenza adeguata", len(adequate))
-
-    st.subheader("Tabella power analysis")
-    st.dataframe(power_df.set_index("variabile"), width="stretch")
-
-    if not under_powered.empty:
-        st.subheader("Variabili sotto-potenziate (effetto incerto)")
-        st.dataframe(under_powered.set_index("variabile")[["d_z","power","interpretazione"]],
-                     width="stretch")
-
-    if not adequate.empty:
-        st.subheader("Variabili con potenza adeguata ma non significative (effetto assente?)")
-        st.dataframe(adequate.set_index("variabile")[["d_z","power","interpretazione"]],
-                     width="stretch")
-
-    st.subheader("Grafico power analysis")
-    fig_pwr, ax_pwr = plt.subplots(figsize=(10, 7))
-    bar_cols = ["#2ECC71" if s else "#E74C3C" for s in power_df["sig_fdr"]]
-    ax_pwr.barh(power_df["variabile"], power_df["power"], color=bar_cols, alpha=0.85, edgecolor="white")
-    ax_pwr.axvline(0.80, color="black", linestyle="--", linewidth=1.5, label="80% (soglia convenzionale)")
-    ax_pwr.axvline(0.50, color="gray",  linestyle=":",  linewidth=1.2, label="50%")
-    ax_pwr.set_xlabel("Potenza osservata (alpha=0.05, N=18)")
-    ax_pwr.set_title("Power Analysis post-hoc\nverde = sig FDR   rosso = non significativa", fontweight="bold")
-    ax_pwr.legend(fontsize=9)
-    ax_pwr.spines["top"].set_visible(False); ax_pwr.spines["right"].set_visible(False)
-    fig_pwr.tight_layout()
-    st.pyplot(fig_pwr)
-    plt.close(fig_pwr)
-
 # ── Tab 8: Correlazioni Delta ─────────────────────────────────
-with tabs[8]:
+with tabs[7]:
     st.header("Heatmap correlazione tra i delta (variabili sig. FDR)")
     st.markdown(
         "Correlazioni **Spearman** tra i delta scores delle variabili significative dopo FDR. "
@@ -606,7 +562,7 @@ with tabs[8]:
         st.info("Nessuna coppia con p<0.05.")
 
 # ── Tab 9: Variabili Composite ───────────────────────────────
-with tabs[9]:
+with tabs[8]:
     st.header("Variabili composite (domain scores)")
     st.markdown(
         "Approccio per risolvere la **multicollinearità** tra variabili dello stesso dominio: "
@@ -617,10 +573,10 @@ with tabs[9]:
     st.subheader("Composizione dei domini")
     domain_info = {
         "movement": ["SPARC_Dom","Jerk_Dom","VelInv_Dom","Dwell_Dom",
-                     "Vel_Mean_Dom","Vel_Peak_Dom","Vel_SD_Dom","PathLen_Dom"],
-        "wrist":    ["Wr_Flex_Mean_Dom","Wr_Flex_SD_Dom","Wr_Dev_Mean_Dom","Wr_Dev_SD_Dom"],
-        "posture":  ["Neck_Sag_Mean","Neck_Sag_SD","Trunk_Sag_Mean","Trunk_Sag_SD"],
-        "arm":      ["UA_Mean_Dom","SD_UA_Dom","LA_Mean_Dom","SD_LA_Dom"],
+                     "Vel_Mean_Dom","Vel_Peak_Dom","Vel_Var_Dom","PathLen_Dom"],
+        "wrist":    ["Wr_Flex_Mean_Dom","Wr_Flex_Var_Dom","Wr_Dev_Mean_Dom","Wr_Dev_Var_Dom"],
+        "posture":  ["Neck_Sag_Mean","Neck_Sag_Var","Trunk_Sag_Mean","Trunk_Sag_Var"],
+        "arm":      ["UA_Mean_Dom","Var_UA_Dom","LA_Mean_Dom","Var_LA_Dom"],
         "RULA (standalone)": ["RULA_Mean"],
     }
     domain_df = pd.DataFrame([
@@ -695,7 +651,7 @@ with tabs[9]:
 
 
 # ── Tab 10: PCA + Regressione ────────────────────────────────
-with tabs[10]:
+with tabs[9]:
     st.header("PCA within-domain + Regressione condizione")
     st.markdown(
         "Per ogni dominio viene estratta la **PC1** (combinazione lineare ottimale delle variabili). "
@@ -783,7 +739,7 @@ with tabs[10]:
 
 
 # ── Tab 11: Considerazioni Finali ────────────────────────────
-with tabs[11]:
+with tabs[10]:
     st.header("Considerazioni Finali")
 
     n_sig_fdr = int(cond_df["sig_fdr"].sum())
@@ -815,7 +771,7 @@ Il workload cognitivo ha prodotto cambiamenti statisticamente significativi (FDR
 
 **Variabilità posturale distale:**
 - **SD_LA** (deviazione standard dell'angolo avambraccio): maggiore irregolarità dell'avambraccio sotto carico.
-- **Neck_Sag_SD**: maggiore oscillazione sagittale del collo — la testa non mantiene una posizione stabile.
+- **Neck_Sag_Var**: maggiore oscillazione sagittale del collo — la testa non mantiene una posizione stabile.
 
 **Variabili non significative:** le misure di posizione media (angoli medi degli arti, RULA_Mean)
 non cambiano in modo rilevante. Il workload altera la *variabilità* e la *fluidità* del
@@ -854,7 +810,7 @@ in modi parzialmente diversi — non c'è un unico "profilo di risposta" condivi
 Le correlazioni Spearman tra i delta delle variabili significative (tab *Correlazioni Delta*)
 rivelano le co-variazioni tipiche: SPARC, Jerk, Vel_Mean e PathLen tendono a cambiare
 insieme (coerenza del cluster di fluidità), mentre la variabilità posturale (SD_LA,
-Neck_Sag_SD) forma un secondo pattern parzialmente indipendente.
+Neck_Sag_Var) forma un secondo pattern parzialmente indipendente.
 """
     )
 
@@ -901,7 +857,7 @@ Il bilanciamento A/B del design crossover sembra aver controllato adeguatamente 
     # ── Variabili raccomandate come outcome primari ───────────
     st.subheader("6 — Variabili raccomandate come outcome sensibili al workload")
     recommended = [v for v in ["SPARC_Dom", "Vel_Mean_Dom", "Dwell_Dom", "PathLen_Dom",
-                               "Jerk_Dom", "Vel_SD_Dom", "SD_LA_Dom", "Neck_Sag_SD"]
+                               "Jerk_Dom", "Vel_Var_Dom", "Var_LA_Dom", "Neck_Sag_Var"]
                    if v in sig_vars]
     other_sig = [v for v in sig_list if v not in recommended]
     rec_rows = []

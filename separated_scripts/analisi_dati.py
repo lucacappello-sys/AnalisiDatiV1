@@ -31,14 +31,14 @@ print(f"N righe:    {len(df)}")
 
 kinematics_vars = [
     "SPARC_Dom", "Jerk_Dom", "VelInv_Dom", "Dwell_Dom",
-    "Vel_Mean_Dom", "Vel_Peak_Dom", "Vel_SD_Dom", "PathLen_Dom",
+    "Vel_Mean_Dom", "Vel_Peak_Dom", "Vel_Var_Dom", "PathLen_Dom",
     "RULA_Mean",
-    "Wr_Flex_Mean_Dom", "Wr_Flex_SD_Dom",
-    "Wr_Dev_Mean_Dom",  "Wr_Dev_SD_Dom",
-    "UA_Mean_Dom",      "SD_UA_Dom",
-    "LA_Mean_Dom",      "SD_LA_Dom",
-    "Neck_Sag_Mean",    "Neck_Sag_SD",
-    "Trunk_Sag_Mean",   "Trunk_Sag_SD",
+    "Wr_Flex_Mean_Dom", "Wr_Flex_Var_Dom",
+    "Wr_Dev_Mean_Dom",  "Wr_Dev_Var_Dom",
+    "UA_Mean_Dom",      "Var_UA_Dom",
+    "LA_Mean_Dom",      "Var_LA_Dom",
+    "Neck_Sag_Mean",    "Neck_Sag_Var",
+    "Trunk_Sag_Mean",   "Trunk_Sag_Var",
 ]
 
 
